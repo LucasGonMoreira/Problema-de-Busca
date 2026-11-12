@@ -482,7 +482,7 @@ def main():
 
     anim = animation.FuncAnimation(fig, atualizar, frames=total_quadros,
                                    interval=70, repeat=False)
-    anim.save(os.path.join(PASTA_IMAGENS, "simulacao_entregas_sequencial.gif"),
+    anim.save(os.path.join(PASTA_IMAGENS, "simulacao_entregas.gif"),
               writer="pillow", fps=14, dpi=DPI_GIF)
     plt.show()
 
@@ -490,7 +490,7 @@ def main():
     try:
         from IPython.display import Image as ImagemIPython, display
         display(ImagemIPython(filename=os.path.join(
-            PASTA_IMAGENS, "simulacao_entregas_sequencial.gif")))
+            PASTA_IMAGENS, "simulacao_entregas.gif")))
     except ImportError:
         pass
 
