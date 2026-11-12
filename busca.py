@@ -30,8 +30,9 @@ ENTREGAS = ["5_0", "5_5", "0_5", "3_5", "4_3", "2_3"]
 # ===== Parâmetros da simulação =====
 LITROS_POR_UNIDADE = 0.10    # litros gastos por unidade de custo de cada aresta
 TANQUE_L = 6.5              # capacidade inicial do tanque, em litros
-PASSOS_POR_ARESTA = 2        # quadros da animação em cada aresta
+PASSOS_POR_ARESTA = 4        # quadros da animação em cada aresta (maior = mais suave)
 PAUSA_NA_ENTREGA = 2         # quadros parados em cada casa
+PAUSA_FINAL = 12             # quadros parado no final (no CD ou onde o combustível acabou)
 DPI_GIF = 48                 # resolução do GIF (menor = mais rápido)
 
 # ===== Imagens (PNG) =====
@@ -39,7 +40,7 @@ PASTA_IMAGENS = os.path.dirname(os.path.abspath(__file__))  # PNGs junto deste s
 ARQ_CASA = os.path.join(PASTA_IMAGENS, "casa-limpa.png")
 ARQ_MOTO = os.path.join(PASTA_IMAGENS, "entregador.png")
 ZOOM_CASA = 0.13             # tamanho da casa no gráfico (ajuste se necessário)
-ZOOM_MOTO = 0.17             # tamanho do entregador no gráfico (ajuste se necessário)
+ZOOM_MOTO = 0.07             # mini entregador (aumente se quiser maior)
 
 
 def carregar_imagem(caminho):
@@ -226,9 +227,11 @@ def criar_moto(ax, imagem):
 # ---------------- 7. Simulação do entregador ----------------
 def simular_rota(G, ordem, T, pos):
     """
-    Percorre a rota trecho a trecho, aresta a aresta, e registra em cada quadro
-    a posição da moto, o combustível acumulado e as entregas já feitas.
-    Retorna (quadros, litros_por_entrega, litros_total).
+    Percorre a rota aresta por aresta, seguindo a linha de entrega, e registra
+    em cada quadro a posição do entregador, o combustível gasto e as entregas
+    feitas. Se o tanque esvaziar, o entregador PARA no ponto exato da aresta em
+    que o combustível acabou e não se move mais.
+    Retorna (quadros, litros_por_entrega, litros_total, sem_combustivel).
     """
     seq = [CD, *ordem, CD]
     # Cada quadro: (x, y, litros_gastos, entregas_feitas, parou_sem_combustivel)
@@ -242,20 +245,19 @@ def simular_rota(G, ordem, T, pos):
     parou = False
 
     for a, b in zip(seq, seq[1:]):
-        if parou:
-            break
         caminho = T[a, b][1]
         for u, v in zip(caminho, caminho[1:]):
             p1, p2 = np.array(pos[u]), np.array(pos[v])
             gasto_aresta = G[u][v]["weight"] * LITROS_POR_UNIDADE
             combustivel_restante = TANQUE_L - litros
             if gasto_aresta > combustivel_restante + 1e-9:
-                # Para no ponto da aresta em que o tanque chega a zero.
+                # Anda só até o ponto da aresta em que o tanque chega a zero.
                 fracao = max(0.0, combustivel_restante / gasto_aresta)
                 for passo in range(1, PASSOS_POR_ARESTA + 1):
                     t = fracao * passo / PASSOS_POR_ARESTA
                     x, y = p1 + (p2 - p1) * t
-                    quadros.append((x, y, TANQUE_L, tuple(entregues), True))
+                    quadros.append((x, y, litros + gasto_aresta * t,
+                                    tuple(entregues), passo == PASSOS_POR_ARESTA))
                 litros = TANQUE_L
                 parou = True
                 break
@@ -273,6 +275,9 @@ def simular_rota(G, ordem, T, pos):
             litros_por_entrega[b] = litros
             for _ in range(PAUSA_NA_ENTREGA):
                 quadros.append((x, y, litros, tuple(entregues), False))
+
+    for _ in range(PAUSA_FINAL):          # fica parado no final da simulação
+        quadros.append((x, y, litros, tuple(entregues), parou))
 
     return quadros, litros_por_entrega, litros, parou
 
@@ -347,23 +352,29 @@ def main():
     simulacoes = []
     totais = {}
     for titulo, ordem, cor in cenarios:
-        quadros, por_entrega, litros_total, parou = simular_rota(G, ordem, T, pos)
+        quadros, por_entrega, litros_total, sem_combustivel = simular_rota(G, ordem, T, pos)
         simulacoes.append((titulo, ordem, cor, quadros))
         totais[titulo] = litros_total
 
         print(f"\n{titulo}")
         print(f"  Trilha: {' → '.join([CD, *ordem, CD])}")
         for k, no in enumerate(ordem, 1):
-            print(f"  {k}ª entrega em {no:<4} combustível acumulado: {por_entrega[no]:6.2f} L")
-        if parou:
-            print(f"  PARADA no caminho: tanque vazio após {len(quadros[-1][3])} entrega(s).")
+            if no in por_entrega:
+                print(f"  {k}ª entrega em {no:<4} combustível acumulado: {por_entrega[no]:6.2f} L")
+            else:
+                print(f"  {k}ª entrega em {no:<4} não realizada (sem combustível)")
+        if sem_combustivel:
+            print(f"  PARADO no caminho: tanque vazio após {len(por_entrega)} entrega(s).")
             print(f"  Combustível gasto: {litros_total:.2f} L | restante: 0.00 L")
         else:
             print(f"  Retorno ao CD concluído | gasto: {litros_total:.2f} L | "
-                  f"restante: {max(0.0, TANQUE_L - litros_total):.2f} L")
+                  f"restante: {TANQUE_L - litros_total:.2f} L")
 
-    diferenca = totais["Algoritmo Genético"] - totais["Vizinho mais próximo"]
+    consumo_rota = {t: custo_rota(o, T) * LITROS_POR_UNIDADE for t, o, _ in cenarios}
     print("\n" + "=" * 72)
+    for titulo, consumo in consumo_rota.items():
+        print(f"Consumo da rota completa | {titulo}: {consumo:.2f} L (tanque: {TANQUE_L:.1f} L)")
+    diferenca = consumo_rota["Algoritmo Genético"] - consumo_rota["Vizinho mais próximo"]
     print(f"Diferença de consumo (AG − vizinho mais próximo): {diferenca:+.2f} L")
     print("=" * 72)
 
@@ -457,21 +468,27 @@ def main():
             p["tanque_valor"].set_text(f"{restante:.1f} L")
 
             terminou = not aguardando and i == len(quadros) - 1
-            chegou_cd = terminou and not parou and np.allclose(
-                (x, y), pos[CD], atol=1e-9
-            )
             if not terminou:
                 resultado = "Resultado: em andamento"
-            elif chegou_cd:
+            elif not parou:
                 resultado = "Resultado: V — chegou ao CD"
             else:
-                resultado = "Resultado: X — não chegou ao CD"
+                resultado = "Resultado: X — parou sem combustível"
+
+            if aguardando:
+                status = "Aguardando vez"
+            elif parou:
+                status = "PARADO — sem combustível"
+            elif terminou:
+                status = "Rota concluída (no CD)"
+            else:
+                status = "Em rota"
 
             p["info"].set_text(
                 f"Combustível gasto: {litros:6.2f} L\n"
                 f"Restante no tanque: {restante:6.2f} L\n"
                 f"Entregas feitas: {len(entregues)}/{len(p['ordem'])}\n"
-                f"Status: {'Aguardando vez' if aguardando else ('PARADO — sem combustível' if parou else 'Em rota')}\n"
+                f"Status: {status}\n"
                 f"{resultado}"
             )
 
